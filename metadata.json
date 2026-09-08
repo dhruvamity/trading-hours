@@ -1,0 +1,6 @@
+{
+  "name": "BTC Session Tracker",
+  "description": "Minimalist Bitcoin trading session tracker with real-time liquidity windows and protocol schedules.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -158,9 +158,7 @@ export default function App() {
       const elapsedSecs = (istTime.totalMinutes - currentZone.start) * 60 + istTime.seconds;
       const percent = Math.min(100, Math.max(0, Math.floor((elapsedSecs / zoneDuration) * 100)));
 
-      const targetText = nextTradableZone.zone.badge
-        ? `${nextTradableZone.zone.badge.toUpperCase()} (${nextTradableZone.zone.name.toUpperCase()})`
-        : nextTradableZone.zone.name.toUpperCase();
+      const targetText = `${nextTradableZone.zone.name.toUpperCase()} (${nextTradableZone.zone.badge.toUpperCase()})`;
 
       const slotStartTz = (nextTradableZone.zone.start + offsetFromIST + 1440) % 1440;
       const slotEndTz = (nextTradableZone.zone.end + offsetFromIST + 1440) % 1440;

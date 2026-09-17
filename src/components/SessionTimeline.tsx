@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { AssetConfig, AssetTrack, TimezoneOption, TradingZone } from '../types';
+import { AssetConfig, TimezoneOption, TradingZone } from '../types';
 import { formatIntervalInTz, formatMins, getSegmentsInTimezone, pad } from '../utils/time';
 
 interface SessionTimelineProps {
@@ -28,24 +28,33 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
     yPx: number;
     minutesInTz: number;
     targetZone: TradingZone;
-    hoverTrackId?: string;
+  } | null>(null);
+
+  // Active hover segment tooltip state
+  const [hoverSegment, setHoverSegment] = useState<{
+    title: string;
+    sublabel: string;
+    status: string;
+    notes?: string;
+    xPct: number;
+    color: string;
   } | null>(null);
 
   // Filter tradable tracks vs capital defense track
   const tradableTracks = useMemo(() => {
-    return currentAsset.tracks.filter(t => t.code !== 'NO');
+    return currentAsset.tracks.filter((t) => t.code !== 'NO');
   }, [currentAsset]);
 
   const defenseTrack = useMemo(() => {
-    return currentAsset.tracks.find(t => t.code === 'NO');
+    return currentAsset.tracks.find((t) => t.code === 'NO');
   }, [currentAsset]);
 
   // Compute dead zone segments across 24h in selected timezone
   const deadZoneSegments = useMemo(() => {
-    const deadZones = currentAsset.zones.filter(z => !z.canTrade);
-    return deadZones.flatMap(z => {
+    const deadZones = currentAsset.zones.filter((z) => !z.canTrade);
+    return deadZones.flatMap((z) => {
       const segs = getSegmentsInTimezone(z.start, z.end, offsetFromIST);
-      return segs.map(s => ({
+      return segs.map((s) => ({
         ...s,
         name: z.name,
         notes: z.notes,
@@ -68,7 +77,9 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
 
     // Corresponding IST minute for zone classification
     const minutesInIst = ((minutesInTz - offsetFromIST) % 1440 + 1440) % 1440;
-    const zone = currentAsset.zones.find(z => minutesInIst >= z.start && minutesInIst < z.end) || currentAsset.zones[0];
+    const zone =
+      currentAsset.zones.find((z) => minutesInIst >= z.start && minutesInIst < z.end) ||
+      currentAsset.zones[0];
 
     setHoverData({
       isHovering: true,
@@ -81,6 +92,7 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
 
   const handleChartMouseLeave = () => {
     setHoverData(null);
+    setHoverSegment(null);
   };
 
   return (
@@ -89,15 +101,17 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
         {/* Time Axis Bar - Fluid 00:00 to 24:00 in selected timezone */}
         <div className="flex mb-3 sm:mb-4 text-[10px] sm:text-xs font-mono text-slate-400 items-center">
           {/* Left Label / Time Display in Top of the Index */}
-          <div className="w-14 sm:w-36 shrink-0 flex items-center pr-2 sm:pr-3">
+          <div className="w-14 sm:w-44 md:w-48 shrink-0 flex items-center pr-2 sm:pr-3">
             {hoverData?.isHovering ? (
               <div
                 id="top-index-hover-badge"
-                className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 bg-slate-900 border border-slate-700/80 rounded text-emerald-400 font-mono font-bold text-xs tracking-tight shadow-sm"
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 bg-slate-900 border border-slate-700/80 rounded text-emerald-400 font-mono font-bold text-xs tracking-tight shadow-sm truncate"
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
                 <span className="truncate">{formatMins(hoverData.minutesInTz)}</span>
-                <span className="text-[10px] text-slate-400 font-semibold">{hoverData.targetZone.code}</span>
+                <span className="text-[10px] text-slate-400 font-semibold shrink-0">
+                  {hoverData.targetZone.code}
+                </span>
               </div>
             ) : (
               <span className="hidden sm:inline text-[10px] font-mono text-slate-500 uppercase tracking-wider font-semibold">
@@ -147,7 +161,7 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
         {/* Master Grid: Left Sessions Index Column + Right tracks */}
         <div className="flex w-full">
           {/* Left Index Column */}
-          <div className="w-14 sm:w-36 shrink-0 flex flex-col gap-3.5 sm:gap-4">
+          <div className="w-14 sm:w-44 md:w-48 shrink-0 flex flex-col gap-3.5 sm:gap-4">
             {/* Tradable Tracks Index Rows */}
             {tradableTracks.map((track) => {
               const rangeStr = formatIntervalInTz(track.start, track.end, offsetFromIST, '');
@@ -157,7 +171,7 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
                 <div
                   key={track.id}
                   className={`h-14 sm:h-18 flex items-center gap-2 sm:gap-2.5 pr-2 sm:pr-3 rounded-lg transition-colors ${
-                    isCurrentTrackActive ? 'bg-slate-800/70 ring-1 ring-emerald-500/40' : ''
+                    isCurrentTrackActive ? 'bg-slate-800/80 ring-1 ring-emerald-500/40' : ''
                   }`}
                 >
                   <span
@@ -166,7 +180,7 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
                   >
                     {track.code}
                   </span>
-                  <div className="hidden sm:block min-w-0">
+                  <div className="hidden sm:block min-w-0 flex-1">
                     <div className="text-xs font-bold text-slate-200 leading-tight truncate">
                       {track.name}
                     </div>
@@ -184,7 +198,7 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
                 <span className="w-8 sm:w-9 h-8 sm:h-9 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs sm:text-sm font-bold font-mono flex items-center justify-center shrink-0">
                   NO
                 </span>
-                <div className="hidden sm:block min-w-0">
+                <div className="hidden sm:block min-w-0 flex-1">
                   <div className="text-xs font-bold text-slate-300 leading-tight truncate">
                     Capital Defense
                   </div>
@@ -212,6 +226,33 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
               />
             )}
 
+            {/* Hover Segment Tooltip Popup */}
+            {hoverSegment && (
+              <div
+                className="hidden sm:block absolute -top-11 pointer-events-none z-50 transition-all duration-75"
+                style={{
+                  left: `${Math.min(84, Math.max(16, hoverSegment.xPct))}%`,
+                  transform: 'translateX(-50%)'
+                }}
+              >
+                <div className="bg-slate-900/95 border border-slate-700 backdrop-blur-md px-3 py-1.5 rounded-lg shadow-2xl flex items-center gap-2 whitespace-nowrap">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: hoverSegment.color }}
+                  ></span>
+                  <span className="text-xs font-bold text-white font-mono">
+                    {hoverSegment.title}
+                  </span>
+                  <span className="text-[10px] text-slate-300 font-mono">
+                    ({hoverSegment.sublabel})
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded font-mono font-bold bg-slate-800 text-amber-300 border border-slate-700">
+                    {hoverSegment.status}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Vertical Synchronized Live Time Needle across all tracks */}
             <div
               id="timeline-needle"
@@ -232,7 +273,10 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
                 <span id="needle-time" className="text-[10px] sm:text-xs font-bold leading-tight">
                   {pad(tzTime.hours)}:{pad(tzTime.minutes)}:{pad(tzTime.seconds)}
                 </span>
-                <span id="needle-day" className="text-[8px] sm:text-[9px] font-semibold opacity-85 uppercase tracking-wide">
+                <span
+                  id="needle-day"
+                  className="text-[8px] sm:text-[9px] font-semibold opacity-85 uppercase tracking-wide"
+                >
                   {tzTime.day} {activeTzObj.short}
                 </span>
                 {/* Downward pointer tip */}
@@ -248,7 +292,12 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
             {tradableTracks.map((track) => {
               const segments = getSegmentsInTimezone(track.start, track.end, offsetFromIST);
               const isCurrentTrackActive = currentZone.id === track.zoneId;
-              const rangeStr = formatIntervalInTz(track.start, track.end, offsetFromIST, activeTzObj.short);
+              const rangeStr = formatIntervalInTz(
+                track.start,
+                track.end,
+                offsetFromIST,
+                activeTzObj.short
+              );
 
               return (
                 <div
@@ -272,21 +321,66 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
                         ? 'bg-amber-500 text-slate-950 font-bold'
                         : 'bg-sky-500 text-slate-950 font-bold';
 
+                    const centerPct = seg.leftPct + seg.widthPct / 2;
+
                     return (
                       <div
                         key={idx}
-                        title={`${track.name}: ${rangeStr}`}
-                        className={`absolute top-0 bottom-0 ${bgColor} transition-all flex flex-col items-center justify-center px-1 sm:px-2 shadow-md cursor-default ${
-                          isCurrentTrackActive ? 'ring-2 ring-white/90 brightness-110 shadow-emerald-500/40' : ''
+                        onMouseEnter={() =>
+                          setHoverSegment({
+                            title: track.name,
+                            sublabel: rangeStr,
+                            status:
+                              track.status === 'TRADE_BIG'
+                                ? 'TRADE (big)'
+                                : track.status === 'TRADE_SCALP'
+                                ? 'TRADE (scalp)'
+                                : 'TRADE',
+                            xPct: centerPct,
+                            color: track.color
+                          })
+                        }
+                        onMouseLeave={() => setHoverSegment(null)}
+                        title={`${track.name} (${rangeStr})`}
+                        className={`absolute top-0 bottom-0 ${bgColor} transition-all flex flex-col items-center justify-center shadow-md cursor-pointer overflow-hidden min-w-0 ${
+                          isCurrentTrackActive
+                            ? 'ring-2 ring-white/90 brightness-110 shadow-emerald-500/40 z-10'
+                            : 'hover:brightness-110'
                         }`}
                         style={{ left: `${seg.leftPct}%`, width: `${seg.widthPct}%` }}
                       >
-                        <span className="text-[10px] sm:text-xs leading-tight truncate">
-                          {isCurrentTrackActive ? `Active • ${track.code}` : track.name}
-                        </span>
-                        <span className="hidden sm:inline text-[9px] opacity-80 font-mono mt-0.5 truncate">
-                          {rangeStr}
-                        </span>
+                        {/* ADAPTIVE FIT CONTENT: Prevents ANY text overflowing outside segment */}
+                        {seg.widthPct >= 11 ? (
+                          /* WIDE SLICE (e.g. 180m+, US Cash, Daily Flush) */
+                          <div className="w-full flex flex-col items-center justify-center px-1.5 min-w-0">
+                            <span className="text-[11px] sm:text-xs font-bold truncate max-w-full text-center leading-tight">
+                              {isCurrentTrackActive ? `Active • ${track.name}` : track.name}
+                            </span>
+                            <span className="hidden sm:inline text-[9px] sm:text-[10px] font-mono opacity-85 truncate max-w-full text-center mt-0.5">
+                              {rangeStr}
+                            </span>
+                          </div>
+                        ) : seg.widthPct >= 5.5 ? (
+                          /* MEDIUM SLICE (e.g. 90m Tokyo Sweep ~6.25%) */
+                          <div className="w-full flex flex-col items-center justify-center px-1 min-w-0">
+                            <span className="text-[10px] sm:text-[11px] font-bold truncate max-w-full text-center leading-tight">
+                              {isCurrentTrackActive ? 'Active' : track.shortName || track.name}
+                            </span>
+                            <span className="text-[8px] sm:text-[9px] font-mono opacity-85 truncate max-w-full text-center leading-none mt-0.5">
+                              {formatMins(seg.startMin)}–{formatMins(seg.endMin)}
+                            </span>
+                          </div>
+                        ) : (
+                          /* NARROW SLICE (e.g. 60m Asian Scalp / Early Europe ~4.16%) */
+                          <div className="w-full flex flex-col items-center justify-center px-0.5 min-w-0">
+                            <span className="text-xs sm:text-sm font-black font-mono tracking-tight leading-none text-center">
+                              {track.code}
+                            </span>
+                            <span className="text-[8px] sm:text-[9px] font-mono opacity-90 leading-tight mt-0.5 text-center">
+                              {formatMins(seg.startMin)}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -304,16 +398,42 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
                 <div className="w-1/4 h-full"></div>
               </div>
 
-              {deadZoneSegments.map((seg, idx) => (
-                <div
-                  key={idx}
-                  className="absolute top-0 bottom-0 bg-rose-950/40 border-r border-rose-900/40 text-[9px] sm:text-[10px] font-mono text-rose-400 flex items-center justify-center px-0.5 sm:px-1 cursor-default"
-                  style={{ left: `${seg.leftPct}%`, width: `${seg.widthPct}%` }}
-                  title={`${seg.name} (${formatMins(seg.startMin)} – ${formatMins(seg.endMin)} ${activeTzObj.short})`}
-                >
-                  <span className="truncate">{seg.badge || 'No trade'}</span>
-                </div>
-              ))}
+              {deadZoneSegments.map((seg, idx) => {
+                const rangeStr = `${formatMins(seg.startMin)}–${formatMins(seg.endMin)} ${activeTzObj.short}`;
+                const centerPct = seg.leftPct + seg.widthPct / 2;
+
+                return (
+                  <div
+                    key={idx}
+                    onMouseEnter={() =>
+                      setHoverSegment({
+                        title: seg.name,
+                        sublabel: rangeStr,
+                        status: 'No trade',
+                        xPct: centerPct,
+                        color: '#ef4444'
+                      })
+                    }
+                    onMouseLeave={() => setHoverSegment(null)}
+                    className="absolute top-0 bottom-0 bg-rose-950/40 border-r border-rose-900/40 text-rose-400 flex items-center justify-center px-1 cursor-default overflow-hidden min-w-0 transition-colors hover:bg-rose-950/60"
+                    style={{ left: `${seg.leftPct}%`, width: `${seg.widthPct}%` }}
+                    title={`${seg.name} (${rangeStr})`}
+                  >
+                    {/* ADAPTIVE FIT: No cut-off "No tr_" */}
+                    {seg.widthPct >= 14 ? (
+                      <span className="text-[10px] font-mono font-medium truncate max-w-full text-center">
+                        Capital Defense
+                      </span>
+                    ) : seg.widthPct >= 7 ? (
+                      <span className="text-[9px] font-mono truncate max-w-full text-center">
+                        No trade
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-mono opacity-50 select-none">⊘</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

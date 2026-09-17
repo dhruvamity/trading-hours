@@ -29,6 +29,7 @@ export interface AssetTrack {
   id: string;
   code: string;
   name: string;
+  shortName?: string;
   sublabel: string;
   color: string;
   bgLight: string;

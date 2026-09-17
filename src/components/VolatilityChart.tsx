@@ -100,7 +100,7 @@ export const VolatilityChart: React.FC<VolatilityChartProps> = ({
 
       {/* SVG Smooth Volatility Area Chart */}
       <div className="flex w-full">
-        <div className="w-14 sm:w-36 shrink-0"></div>
+        <div className="w-14 sm:w-44 md:w-48 shrink-0"></div>
         <div
           id="volatility-chart-container"
           onMouseMove={handleVolMouseMove}

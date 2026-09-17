@@ -2,17 +2,18 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# BTC Session Tracker & Trading Hours
+# Trading Hours • BTC & XAU/USD Gold Session Tracker
 
-Minimalist Bitcoin trading session tracker with real-time liquidity windows, protocol schedules, market volatility timelines, and trade session rules. Built 100% on Vite, React 19, TypeScript, and Tailwind CSS v4.
+Minimalist institutional session tracker for **BTC/USDT** and **XAU/USD Gold** with real-time liquidity windows, Section 6 protocol schedules, market volatility timelines, and trade session rules. Built 100% on Vite, React 19, TypeScript, and Tailwind CSS v4.
 
 ## Features
 
-- **Live Session Tracking**: Real-time IST (Indian Standard Time) and UTC clock synchronized with Asian, London, and New York market sessions.
-- **Liquidity & Volatility Curve**: Visualized 24-hour liquidity curve and quarter-grid guidelines with real-time needle and scrubbable crosshair.
-- **Protocol Schedules & Playbooks**: Detailed trading playbooks, dead zones, swing-only periods, and scalp zones.
-- **Countdown Timers**: Dynamic countdowns to upcoming key market events, session open/close, and volatility expansions.
-- **Audio & Visual Alerts**: Alerts when entering new market zones and volatility spikes.
+- **Dedicated Subpages**: Dedicated views for **₿ BTC/USDT** and **🪙 XAU/USD Gold** with URL routing (`/btc` and `/gold` / `/xau`).
+- **Live Session Tracking**: Real-time IST (Indian Standard Time), UTC, and ET (New York) clocks synchronized with global market sessions.
+- **Section 6 Verified Execution Schedules**: Exact trade windows, scalp pockets, and capital defense dead zones.
+- **Quantitative Alpha & Notes**: Empirical data-backed notes including Gold 19:00–20:00 vs 20:00–22:30 PF performance falloff and 00:00–01:00 IST anomalies.
+- **Liquidity & Volatility Curves**: Asset-calibrated 24-hour volatility curves and quarter-grid guidelines with real-time needle and scrubbable crosshair.
+- **Countdown Timers & Progress Gauges**: Dynamic circular progress rings and LED countdowns to upcoming sessions or session closes.
 
 ## Tech Stack
 

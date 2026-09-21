@@ -41,6 +41,28 @@ export interface AssetTrack {
 }
 
 export type AssetId = 'btc' | 'gold';
+export type PageTab = 'btc' | 'gold' | 'terminal';
+
+export type SlotLabel = 'PRIME' | 'SWING_ENTRY' | 'SMALL_TRADES' | 'NO_TRADE' | 'CLOSED';
+
+export interface TerminalSlotStats {
+  er_mean: number;
+  range_cost_ratio: number;
+  false_breakout_rate: number;
+  follow_through_prob: number;
+}
+
+export interface TerminalSlot {
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  label: SlotLabel;
+  score: number;
+  confidence: 'HIGH' | 'MED' | 'LOW';
+  bin_count: number;
+  stats: TerminalSlotStats;
+  bins: string[];
+}
 
 export interface QuantNote {
   title: string;

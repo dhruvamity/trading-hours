@@ -1,11 +1,12 @@
 import React from 'react';
-import { ChevronDown, Clock, Sparkles } from 'lucide-react';
-import { AssetConfig, AssetId, TimezoneOption, TzId } from '../types';
+import { ChevronDown, Clock, Sparkles, Terminal, Activity } from 'lucide-react';
+import { AssetConfig, PageTab, TimezoneOption, TzId } from '../types';
 import { TIMEZONES } from '../data/assets';
 
 interface AssetHeaderProps {
   currentAsset: AssetConfig;
-  onSelectAsset: (assetId: AssetId) => void;
+  activeTab: PageTab;
+  onSelectTab: (tab: PageTab) => void;
   selectedTz: TzId;
   onSelectTz: (tz: TzId) => void;
   isCurrentZoneTradable: boolean;
@@ -15,11 +16,12 @@ interface AssetHeaderProps {
 
 export const AssetHeader: React.FC<AssetHeaderProps> = ({
   currentAsset,
-  onSelectAsset,
+  activeTab,
+  onSelectTab,
   selectedTz,
   onSelectTz,
   btcTradable,
-  goldTradable
+  goldTradable,
 }) => {
   const activeTzObj = TIMEZONES[selectedTz];
 
@@ -30,18 +32,20 @@ export const AssetHeader: React.FC<AssetHeaderProps> = ({
         {/* Left: App Title and Pair Badge */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2.5">
-            <span className="text-2xl" role="img" aria-label={currentAsset.quoteName}>
-              {currentAsset.icon}
+            <span className="text-2xl" role="img" aria-label={activeTab === 'terminal' ? 'Live Terminal' : currentAsset.quoteName}>
+              {activeTab === 'terminal' ? '⚡' : currentAsset.icon}
             </span>
             <div>
               <h1 id="app-title" className="text-xl sm:text-2xl font-extrabold tracking-tight text-white flex items-center gap-2">
-                {currentAsset.pair}
+                {activeTab === 'terminal' ? 'Quant Live Terminal' : currentAsset.pair}
                 <span className="text-xs font-mono font-medium text-slate-400 hidden sm:inline">
-                  Session Tracker
+                  {activeTab === 'terminal' ? 'IST Momentum & Chop' : 'Session Tracker'}
                 </span>
               </h1>
               <p className="text-[11px] text-slate-400 font-mono hidden xs:block">
-                Section 6 Liquidity Timeline & Execution Rules
+                {activeTab === 'terminal'
+                  ? 'Real-Time IST Execution Windows & Quantitative Alpha'
+                  : 'Section 6 Liquidity Timeline & Execution Rules'}
               </p>
             </div>
           </div>
@@ -59,9 +63,9 @@ export const AssetHeader: React.FC<AssetHeaderProps> = ({
           <nav aria-label="Asset subpages" className="flex items-center bg-[#131c31] p-1 rounded-xl border border-slate-700/80 shadow-inner">
             <button
               id="subpage-tab-btc"
-              onClick={() => onSelectAsset('btc')}
+              onClick={() => onSelectTab('btc')}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
-                currentAsset.id === 'btc'
+                activeTab === 'btc'
                   ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/30'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
               }`}
@@ -71,7 +75,7 @@ export const AssetHeader: React.FC<AssetHeaderProps> = ({
               {btcTradable && (
                 <span
                   className={`w-2 h-2 rounded-full animate-ping ${
-                    currentAsset.id === 'btc' ? 'bg-slate-950' : 'bg-emerald-400'
+                    activeTab === 'btc' ? 'bg-slate-950' : 'bg-emerald-400'
                   }`}
                 />
               )}
@@ -79,9 +83,9 @@ export const AssetHeader: React.FC<AssetHeaderProps> = ({
 
             <button
               id="subpage-tab-gold"
-              onClick={() => onSelectAsset('gold')}
+              onClick={() => onSelectTab('gold')}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
-                currentAsset.id === 'gold'
+                activeTab === 'gold'
                   ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/30'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
               }`}
@@ -91,10 +95,28 @@ export const AssetHeader: React.FC<AssetHeaderProps> = ({
               {goldTradable && (
                 <span
                   className={`w-2 h-2 rounded-full animate-ping ${
-                    currentAsset.id === 'gold' ? 'bg-slate-950' : 'bg-amber-400'
+                    activeTab === 'gold' ? 'bg-slate-950' : 'bg-amber-400'
                   }`}
                 />
               )}
+            </button>
+
+            <button
+              id="subpage-tab-terminal"
+              onClick={() => onSelectTab('terminal')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
+                activeTab === 'terminal'
+                  ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-slate-950 shadow-md shadow-cyan-500/30'
+                  : 'text-cyan-400 hover:text-cyan-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span>Live Terminal</span>
+              <span
+                className={`w-2 h-2 rounded-full animate-pulse ${
+                  activeTab === 'terminal' ? 'bg-slate-950' : 'bg-cyan-400'
+                }`}
+              />
             </button>
           </nav>
 

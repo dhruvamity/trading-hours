@@ -26,3 +26,11 @@ def ist_to_epoch_ms(dt_ist: datetime) -> int:
     if dt_ist.tzinfo is None:
         dt_ist = dt_ist.replace(tzinfo=TZ_IST)
     return int(dt_ist.timestamp() * 1000)
+
+
+ms_to_ist = epoch_ms_to_ist
+
+
+def ms_to_utc(epoch_ms: int) -> datetime:
+    """Convert UTC epoch millisecond timestamp to UTC datetime."""
+    return datetime.fromtimestamp(epoch_ms / 1000, tz=TZ_UTC)

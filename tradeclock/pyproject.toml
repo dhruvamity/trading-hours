@@ -23,5 +23,6 @@ dependencies = [
 tradeclock = "tradeclock.terminal.app:main"
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

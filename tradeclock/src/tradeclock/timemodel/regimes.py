@@ -1,59 +1,60 @@
-"""Dynamic US and UK Daylight Saving Time (DST) regime tracking."""
+"""DST regimes, London/NY clock change tracking, and desync transition week tagging."""
 from __future__ import annotations
 
-from datetime import datetime
-import pandas as pd
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
+import pandas as pd
 
 from tradeclock.timemodel.timezone import TZ_NY, TZ_LON, TZ_UTC
 
 
-def get_dst_regime(dt_utc: datetime) -> dict[str, str | bool]:
-    """Inspect DST status for US (Eastern) and UK (London) at a given UTC datetime."""
+def get_dst_info(dt_utc: datetime) -> dict:
+    """Analyze daylight saving time status for US and UK at a given UTC datetime."""
     if dt_utc.tzinfo is None:
         dt_utc = dt_utc.replace(tzinfo=TZ_UTC)
 
     dt_ny = dt_utc.astimezone(TZ_NY)
     dt_lon = dt_utc.astimezone(TZ_LON)
 
-    us_dst_active = bool(dt_ny.dst() and dt_ny.dst().total_seconds() > 0)
-    uk_dst_active = bool(dt_lon.dst() and dt_lon.dst().total_seconds() > 0)
+    # US DST: In America/New_York, UTC-4 is Daylight Saving (Summer), UTC-5 is Standard (Winter)
+    us_dst = bool(dt_ny.dst() and dt_ny.dst().total_seconds() != 0)
 
-    # US Summer (EDT, UTC-4) vs US Winter (EST, UTC-5)
-    us_regime = "US_SUMMER" if us_dst_active else "US_WINTER"
-    uk_regime = "UK_SUMMER" if uk_dst_active else "UK_WINTER"
+    # UK DST: In Europe/London, UTC+1 (BST) is Daylight Saving (Summer), UTC+0 (GMT) is Standard (Winter)
+    uk_dst = bool(dt_lon.dst() and dt_lon.dst().total_seconds() != 0)
 
-    # Desync occurs during the 2-3 weeks in March and 1 week in Oct/Nov
-    is_desync = (us_dst_active != uk_dst_active)
+    # Out of sync if one is in Summer and the other is in Winter
+    is_desync = (us_dst != uk_dst)
+
+    if is_desync:
+        regime = "DESYNC"
+    elif us_dst:
+        regime = "US_SUMMER"
+    else:
+        regime = "US_WINTER"
 
     return {
-        "us_regime": us_regime,
-        "uk_regime": uk_regime,
+        "us_dst": us_dst,
+        "uk_dst": uk_dst,
         "is_desync": is_desync,
-        "active_primary": us_regime, # Primary market anchor for US session
+        "regime": regime,
     }
 
 
-def tag_df_with_regimes(df: pd.DataFrame) -> pd.DataFrame:
-    """Tag an entire DataFrame containing open_time (epoch ms) with DST regimes."""
+def tag_dst_regimes(df: pd.DataFrame, time_col: str = "open_time") -> pd.DataFrame:
+    """Tag a DataFrame of candles with DST regime metadata based on UTC timestamp."""
     df = df.copy()
-    dt_utc = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+    dts = pd.to_datetime(df[time_col], unit="ms", utc=True)
+    unique_dates = dts.dt.date.unique()
 
-    # Vectorized check via America/New_York and Europe/London offsets
-    dt_ny = dt_utc.dt.tz_convert(TZ_NY)
-    dt_lon = dt_utc.dt.tz_convert(TZ_LON)
+    date_to_info = {}
+    for d in unique_dates:
+        midday = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=timezone.utc)
+        date_to_info[d] = get_dst_info(midday)
 
-    # In EDT, UTC offset is -4 hours (-14400s). In EST, -5 hours (-18000s).
-    us_offsets = dt_ny.apply(lambda x: x.utcoffset().total_seconds() if x is not None else -18000).values
-    uk_offsets = dt_lon.apply(lambda x: x.utcoffset().total_seconds() if x is not None else 0).values
-
-    us_summer = (us_offsets == -14400)
-    uk_summer = (uk_offsets == 3600)
-
-    df["us_regime"] = np.where(us_summer, "US_SUMMER", "US_WINTER")
-    df["uk_regime"] = np.where(uk_summer, "UK_SUMMER", "UK_WINTER")
-    df["dst_desync"] = (us_summer != uk_summer)
-    df["regime"] = df["us_regime"]
+    dates = dts.dt.date
+    df["us_dst"] = [date_to_info[d]["us_dst"] for d in dates]
+    df["uk_dst"] = [date_to_info[d]["uk_dst"] for d in dates]
+    df["is_dst_desync"] = [date_to_info[d]["is_desync"] for d in dates]
+    df["dst_regime"] = [date_to_info[d]["regime"] for d in dates]
 
     return df
-import numpy as np

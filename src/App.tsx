@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { AssetId, TzId } from './types';
+import { AssetId, PageTab, TzId } from './types';
 import { ASSETS, BTC_CONFIG, GOLD_CONFIG, TIMEZONES } from './data/assets';
 import { getLiveTime, getTzOffsetMinutesFromIST, formatMins, pad } from './utils/time';
 import { AssetHeader } from './components/AssetHeader';
@@ -7,12 +7,16 @@ import { StatusCountdownCard } from './components/StatusCountdownCard';
 import { SessionTimeline } from './components/SessionTimeline';
 import { VolatilityChart } from './components/VolatilityChart';
 import { ScheduleTable } from './components/ScheduleTable';
+import { TerminalView } from './components/TerminalView';
 
 export default function App() {
-  // Parse initial asset from URL pathname or hash (/gold, /xau, /btc)
-  const getInitialAssetId = (): AssetId => {
+  // Parse initial tab from URL pathname or hash (/gold, /xau, /btc, /terminal)
+  const getInitialTab = (): PageTab => {
     if (typeof window !== 'undefined') {
       const path = (window.location.pathname + window.location.hash).toLowerCase();
+      if (path.includes('terminal')) {
+        return 'terminal';
+      }
       if (path.includes('gold') || path.includes('xau')) {
         return 'gold';
       }
@@ -20,30 +24,30 @@ export default function App() {
     return 'btc';
   };
 
-  const [activeAssetId, setActiveAssetId] = useState<AssetId>(getInitialAssetId);
+  const [activeTab, setActiveTab] = useState<PageTab>(getInitialTab);
   const [selectedTz, setSelectedTz] = useState<TzId>('IST');
 
   // Sync with browser back/forward navigation
   useEffect(() => {
     const handlePopState = () => {
-      setActiveAssetId(getInitialAssetId());
+      setActiveTab(getInitialTab());
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Handler for changing asset subpage
-  const handleSelectAsset = useCallback((assetId: AssetId) => {
-    setActiveAssetId(assetId);
+  // Handler for changing subpage
+  const handleSelectTab = useCallback((tab: PageTab) => {
+    setActiveTab(tab);
     if (typeof window !== 'undefined') {
-      const targetUrl = assetId === 'gold' ? '/gold' : '/btc';
+      const targetUrl = tab === 'terminal' ? '/terminal' : tab === 'gold' ? '/gold' : '/btc';
       if (window.location.pathname !== targetUrl) {
         window.history.pushState(null, '', targetUrl);
       }
     }
   }, []);
 
-  const currentAsset = ASSETS[activeAssetId] || BTC_CONFIG;
+  const currentAsset = ASSETS[activeTab === 'gold' ? 'gold' : 'btc'] || BTC_CONFIG;
   const activeTzObj = TIMEZONES[selectedTz];
 
   // Real-time live clocks
@@ -187,7 +191,8 @@ export default function App() {
         {/* Top Header with Asset Switcher and Timezone Selector */}
         <AssetHeader
           currentAsset={currentAsset}
-          onSelectAsset={handleSelectAsset}
+          activeTab={activeTab}
+          onSelectTab={handleSelectTab}
           selectedTz={selectedTz}
           onSelectTz={setSelectedTz}
           isCurrentZoneTradable={currentZone.canTrade}
@@ -195,51 +200,61 @@ export default function App() {
           goldTradable={goldTradable}
         />
 
-        {/* Live Status & Countdown Gauge Card */}
-        <StatusCountdownCard
-          currentAsset={currentAsset}
-          istTime={istTime}
-          tzTime={tzTime}
-          activeTzObj={activeTzObj}
-          currentZone={currentZone}
-          countdownData={countdownData}
-        />
+        {activeTab === 'terminal' ? (
+          /* Live IST Quant Terminal Subpage */
+          <div className="mt-6">
+            <TerminalView />
+          </div>
+        ) : (
+          /* Asset Session Tracker Views */
+          <>
+            {/* Live Status & Countdown Gauge Card */}
+            <StatusCountdownCard
+              currentAsset={currentAsset}
+              istTime={istTime}
+              tzTime={tzTime}
+              activeTzObj={activeTzObj}
+              currentZone={currentZone}
+              countdownData={countdownData}
+            />
 
-        {/* Interactive 24H Session Timeline */}
-        <SessionTimeline
-          currentAsset={currentAsset}
-          offsetFromIST={offsetFromIST}
-          activeTzObj={activeTzObj}
-          tzTime={tzTime}
-          istTime={istTime}
-          currentZone={currentZone}
-        />
+            {/* Interactive 24H Session Timeline */}
+            <SessionTimeline
+              currentAsset={currentAsset}
+              offsetFromIST={offsetFromIST}
+              activeTzObj={activeTzObj}
+              tzTime={tzTime}
+              istTime={istTime}
+              currentZone={currentZone}
+            />
 
-        {/* Dynamic Volatility Profile Waveform */}
-        <VolatilityChart
-          currentAsset={currentAsset}
-          offsetFromIST={offsetFromIST}
-          activeTzObj={activeTzObj}
-          tzTime={tzTime}
-          currentZone={currentZone}
-        />
+            {/* Dynamic Volatility Profile Waveform */}
+            <VolatilityChart
+              currentAsset={currentAsset}
+              offsetFromIST={offsetFromIST}
+              activeTzObj={activeTzObj}
+              tzTime={tzTime}
+              currentZone={currentZone}
+            />
 
-        {/* Section 6 Execution Schedule Table & Quant Notes */}
-        <ScheduleTable
-          currentAsset={currentAsset}
-          currentZone={currentZone}
-          offsetFromIST={offsetFromIST}
-          activeTzObj={activeTzObj}
-        />
+            {/* Section 6 Execution Schedule Table & Quant Notes */}
+            <ScheduleTable
+              currentAsset={currentAsset}
+              currentZone={currentZone}
+              offsetFromIST={offsetFromIST}
+              activeTzObj={activeTzObj}
+            />
+          </>
+        )}
       </div>
 
       {/* Footer Info */}
       <footer className="mt-5 text-center text-xs font-mono text-slate-500 flex items-center justify-center gap-4">
-        <span>Trading Hours • Section 6 Spec</span>
+        <span>Trading Hours • Section 6 Spec & Live Terminal</span>
         <span>•</span>
         <span>IST (UTC+5:30) Synchronized</span>
         <span>•</span>
-        <span>Use top switcher to toggle BTC / Gold</span>
+        <span>Use top switcher to toggle BTC / Gold / Terminal</span>
       </footer>
     </main>
   );

@@ -1,6 +1,7 @@
 .PHONY: all data clean analyze validate report schedule app test
 
 PYTHON ?= python3
+export PYTHONPATH := src:$(PYTHONPATH)
 
 all: data clean analyze validate report schedule test
 

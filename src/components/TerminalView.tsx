@@ -2,41 +2,37 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Activity, 
   Clock, 
+  Calendar, 
+  Zap, 
   ShieldAlert, 
   TrendingUp, 
-  Zap, 
-  BarChart2, 
-  CheckCircle2, 
-  AlertTriangle,
-  Flame,
-  Calendar,
-  Layers,
+  Sparkles,
   ArrowRight,
-  Info
+  Flame,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import bundledSchedule from '../data/bundled_schedule.json';
 import { SlotLabel, TerminalSlot } from '../types';
+import { pad, formatMins } from '../utils/time';
 
 type InstrumentKey = 'BTCUSDT' | 'XAUUSD_MT5' | 'XAUUSDT_BINANCE';
 
-const INSTRUMENT_META: Record<InstrumentKey, { name: string; tag: string; icon: string; history: string }> = {
+const INSTRUMENT_META: Record<InstrumentKey, { name: string; tag: string; icon: string }> = {
   BTCUSDT: {
-    name: 'Bitcoin Perpetual',
-    tag: 'Binance USD-M',
+    name: 'BTC/USDT',
+    tag: 'Perpetual',
     icon: '₿',
-    history: '4 Years (317,274 5m bars)',
   },
   XAUUSD_MT5: {
-    name: 'Gold Spot (Institutional)',
-    tag: 'MetaTrader 5 Feed',
+    name: 'XAU/USD',
+    tag: 'Spot (MT5)',
     icon: '🪙',
-    history: '3 Years (212,177 5m bars)',
   },
   XAUUSDT_BINANCE: {
-    name: 'Gold Perpetual',
-    tag: 'Binance USD-M',
+    name: 'XAU/USDT',
+    tag: 'Perp (Binance)',
     icon: '⚡',
-    history: '9 Months (Dec 2025 - Present)',
   },
 };
 
@@ -48,7 +44,15 @@ export const TerminalView: React.FC = () => {
   const [now, setNow] = useState<Date>(new Date());
   const [selectedDay, setSelectedDay] = useState<string>('Monday');
 
-  // Try fetching fresh public/schedule.json on mount
+  // Hover crosshair and segment tooltip state
+  const [hoverData, setHoverData] = useState<{
+    isHovering: boolean;
+    xPct: number;
+    minutesInIst: number;
+    slot: TerminalSlot | null;
+  } | null>(null);
+
+  // Fetch fresh public/schedule.json if available
   useEffect(() => {
     fetch('/schedule.json')
       .then((res) => {
@@ -61,7 +65,7 @@ export const TerminalView: React.FC = () => {
         }
       })
       .catch(() => {
-        // bundledSchedule is already fallback
+        // Fallback to bundledSchedule
       });
   }, []);
 
@@ -71,9 +75,8 @@ export const TerminalView: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Compute IST Date, Time, and minutes of day
+  // Compute live IST Date, Time, and total minutes
   const istInfo = useMemo(() => {
-    // Format to Asia/Kolkata
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: 'Asia/Kolkata',
       hour12: false,
@@ -107,8 +110,8 @@ export const TerminalView: React.FC = () => {
     }
 
     return {
-      dateStr: `${weekdayStr}, ${month} ${day}, ${year}`,
-      timeStr: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`,
+      dateStr: `${weekdayStr}, ${month} ${day}`,
+      timeStr: `${pad(hour)}:${pad(minute)}:${pad(second)}`,
       hour,
       minute,
       second,
@@ -118,485 +121,738 @@ export const TerminalView: React.FC = () => {
     };
   }, [now]);
 
-  // Set initial selected day to current weekday if valid
+  // Set default selected day to current weekday if valid
   useEffect(() => {
     if (WEEKDAYS.includes(istInfo.effectiveWeekday)) {
       setSelectedDay(istInfo.effectiveWeekday);
     }
   }, [istInfo.effectiveWeekday]);
 
-  // DST Regime check (US Summer EDT vs Winter EST)
+  // Active regime
   const activeRegime = useMemo(() => {
-    // In US, EDT runs roughly from 2nd Sunday in March to 1st Sunday in November
-    const m = now.getUTCMonth(); // 0-indexed (2 = March, 10 = Nov)
+    const m = now.getUTCMonth(); // 3 = April, 9 = October
     if (m >= 3 && m <= 9) return 'US_SUMMER';
-    return 'US_SUMMER'; // default to active US_SUMMER
+    return 'US_SUMMER';
   }, [now]);
 
-  // Active instrument data
+  // Slot map
   const instrumentData = scheduleData?.instruments?.[selectedInstrument] || bundledSchedule.instruments[selectedInstrument];
   const regimeSlotsMap = instrumentData?.regimes?.[activeRegime]?.slots || instrumentData?.regimes?.['POOLED']?.slots || {};
 
-  // Today's live slots and selected day's slots
-  const liveDaySlots: TerminalSlot[] = regimeSlotsMap[istInfo.effectiveWeekday] || [];
   const selectedDaySlots: TerminalSlot[] = regimeSlotsMap[selectedDay] || [];
+  const todayLiveSlots: TerminalSlot[] = regimeSlotsMap[istInfo.effectiveWeekday] || [];
 
-  // Find active slot and minutes remaining
-  const { activeSlot, nextSlot, minutesRemaining, secondsRemaining } = useMemo(() => {
-    if (!liveDaySlots || liveDaySlots.length === 0) {
-      return { activeSlot: null, nextSlot: null, minutesRemaining: 0, secondsRemaining: 0 };
+  // Parse start and end minutes for a slot
+  const parseSlotRange = (slot: TerminalSlot) => {
+    const [sh, sm] = slot.start_time.split(':').map(Number);
+    const [eh, em] = slot.end_time.split(':').map(Number);
+    const startMin = sh * 60 + sm;
+    const endMin = (eh === 0 && em === 0 && startMin > 0) ? 1440 : (eh * 60 + em);
+    return { startMin, endMin };
+  };
+
+  // Active slot, countdowns, and next tradable window
+  const statusInfo = useMemo(() => {
+    if (!todayLiveSlots || todayLiveSlots.length === 0) {
+      return {
+        isTradable: false,
+        activeSlot: null,
+        nextTradableSlot: null,
+        secondsRemainingInActive: 0,
+        secondsUntilNextTradable: 0,
+        percentElapsed: 0,
+      };
     }
 
-    for (let i = 0; i < liveDaySlots.length; i++) {
-      const s = liveDaySlots[i];
-      const [sh, sm] = s.start_time.split(':').map(Number);
-      const [eh, em] = s.end_time.split(':').map(Number);
+    let active: TerminalSlot | null = null;
+    let activeIndex = -1;
 
-      const startMin = sh * 60 + sm;
-      const endMin = (eh === 0 && em === 0 && startMin > 0) ? 1440 : (eh * 60 + em);
-
+    for (let i = 0; i < todayLiveSlots.length; i++) {
+      const { startMin, endMin } = parseSlotRange(todayLiveSlots[i]);
       if (istInfo.totalMinutes >= startMin && istInfo.totalMinutes < endMin) {
-        const remainingTotalSecs = (endMin * 60) - (istInfo.totalMinutes * 60 + istInfo.second);
-        const remMins = Math.floor(remainingTotalSecs / 60);
-        const remSecs = remainingTotalSecs % 60;
-        const nxt = i + 1 < liveDaySlots.length ? liveDaySlots[i + 1] : liveDaySlots[0];
-        return {
-          activeSlot: s,
-          nextSlot: nxt,
-          minutesRemaining: remMins,
-          secondsRemaining: remSecs,
-        };
+        active = todayLiveSlots[i];
+        activeIndex = i;
+        break;
       }
     }
 
-    return { activeSlot: null, nextSlot: liveDaySlots[0] || null, minutesRemaining: 0, secondsRemaining: 0 };
-  }, [liveDaySlots, istInfo.totalMinutes, istInfo.second]);
+    if (!active && todayLiveSlots.length > 0) {
+      active = todayLiveSlots[0];
+      activeIndex = 0;
+    }
 
-  // Helper for label badge styling
-  const getBadgeStyle = (label: SlotLabel) => {
+    const isTradable = active ? (active.label !== 'NO_TRADE' && active.label !== 'CLOSED') : false;
+
+    // Time remaining in active slot
+    let secondsRemainingInActive = 0;
+    let percentElapsed = 0;
+
+    if (active) {
+      const { startMin, endMin } = parseSlotRange(active);
+      const totalSlotSecs = (endMin - startMin) * 60;
+      const elapsedSecs = (istInfo.totalMinutes - startMin) * 60 + istInfo.second;
+      secondsRemainingInActive = Math.max(0, (endMin * 60) - (istInfo.totalMinutes * 60 + istInfo.second));
+      percentElapsed = Math.min(100, Math.max(0, Math.floor((elapsedSecs / totalSlotSecs) * 100)));
+    }
+
+    // Find next tradable slot if not currently tradable
+    let nextTradableSlot: TerminalSlot | null = null;
+    let secondsUntilNextTradable = 0;
+
+    const tradableSlots = todayLiveSlots.filter((s) => s.label !== 'NO_TRADE' && s.label !== 'CLOSED');
+    if (tradableSlots.length > 0) {
+      const upcoming = tradableSlots.find((s) => {
+        const { startMin } = parseSlotRange(s);
+        return startMin > istInfo.totalMinutes;
+      });
+
+      if (upcoming) {
+        nextTradableSlot = upcoming;
+        const { startMin } = parseSlotRange(upcoming);
+        secondsUntilNextTradable = Math.max(0, (startMin * 60) - (istInfo.totalMinutes * 60 + istInfo.second));
+      } else {
+        // First tradable slot of tomorrow
+        nextTradableSlot = tradableSlots[0];
+        const { startMin } = parseSlotRange(tradableSlots[0]);
+        secondsUntilNextTradable = Math.max(0, ((1440 - istInfo.totalMinutes + startMin) * 60) - istInfo.second);
+      }
+    }
+
+    return {
+      isTradable,
+      activeSlot: active,
+      nextTradableSlot,
+      secondsRemainingInActive,
+      secondsUntilNextTradable,
+      percentElapsed,
+    };
+  }, [todayLiveSlots, istInfo.totalMinutes, istInfo.second]);
+
+  // Aggregate day statistics for the selected day
+  const dayStats = useMemo(() => {
+    let tradableMinutes = 0;
+    let defenseMinutes = 0;
+    let tradableCount = 0;
+    let defenseCount = 0;
+
+    selectedDaySlots.forEach((slot) => {
+      if (slot.label !== 'NO_TRADE' && slot.label !== 'CLOSED') {
+        tradableMinutes += slot.duration_minutes;
+        tradableCount++;
+      } else {
+        defenseMinutes += slot.duration_minutes;
+        defenseCount++;
+      }
+    });
+
+    return {
+      tradableHours: (tradableMinutes / 60).toFixed(1),
+      defenseHours: (defenseMinutes / 60).toFixed(1),
+      tradableCount,
+      defenseCount,
+      tradablePct: Math.round((tradableMinutes / 1440) * 100),
+    };
+  }, [selectedDaySlots]);
+
+  // Live needle position in percentage of 24h
+  const needlePct = Math.min(100, Math.max(0, (istInfo.totalMinutes / 1440) * 100));
+
+  // Chart mouse interaction
+  const handleChartMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clientX = e.clientX - rect.left;
+    const clampedX = Math.max(0, Math.min(rect.width, clientX));
+    const xPct = (clampedX / rect.width) * 100;
+    const minutesInIst = Math.min(1439, Math.max(0, Math.round((xPct / 100) * 1440)));
+
+    const slot = selectedDaySlots.find((s) => {
+      const { startMin, endMin } = parseSlotRange(s);
+      return minutesInIst >= startMin && minutesInIst < endMin;
+    }) || null;
+
+    setHoverData({
+      isHovering: true,
+      xPct,
+      minutesInIst,
+      slot,
+    });
+  };
+
+  const handleChartMouseLeave = () => {
+    setHoverData(null);
+  };
+
+  // Format seconds to H:M:S or M:S
+  const formatCountdown = (totalSecs: number) => {
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+    if (h > 0) {
+      return `${pad(h)}h ${pad(m)}m ${pad(s)}s`;
+    }
+    return `${pad(m)}m ${pad(s)}s`;
+  };
+
+  // Color & badge helpers
+  const getSlotVisuals = (label: SlotLabel) => {
     switch (label) {
       case 'PRIME':
         return {
-          bg: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50',
-          dot: 'bg-emerald-400 shadow-[0_0_10px_#10b981]',
-          cardGlow: 'shadow-[0_0_30px_-5px_rgba(16,185,129,0.3)] border-emerald-500/50',
-          title: 'PRIME MOMENTUM WINDOW',
-          desc: 'High Trend-Quality Score, sustained path efficiency, and ample range vs transaction costs.',
+          bg: 'bg-emerald-500 text-slate-950 font-bold',
+          badgeBg: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
+          dot: 'bg-emerald-400',
+          glowText: 'text-emerald-400',
+          name: 'PRIME MOMENTUM',
+          isTradable: true,
         };
       case 'SWING_ENTRY':
         return {
-          bg: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50',
-          dot: 'bg-cyan-400 shadow-[0_0_10px_#06b6d4]',
-          cardGlow: 'shadow-[0_0_30px_-5px_rgba(6,182,212,0.3)] border-cyan-500/50',
-          title: 'SWING ENTRY MOMENTUM WINDOW',
-          desc: 'Peak follow-through probability (+1 ATR before -1 ATR in 3h) with multi-hour persistence.',
+          bg: 'bg-cyan-500 text-slate-950 font-bold',
+          badgeBg: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
+          dot: 'bg-cyan-400',
+          glowText: 'text-cyan-400',
+          name: 'SWING ENTRY',
+          isTradable: true,
         };
       case 'SMALL_TRADES':
         return {
-          bg: 'bg-amber-500/20 text-amber-400 border-amber-500/50',
-          dot: 'bg-amber-400 shadow-[0_0_10px_#f59e0b]',
-          cardGlow: 'shadow-[0_0_30px_-5px_rgba(245,158,11,0.2)] border-amber-500/40',
-          title: 'SMALL TRADES / SCALP POCKET',
-          desc: 'Moderate volatility or selective liquidity. Strict risk limits and scalping recommended.',
-        };
-      case 'NO_TRADE':
-        return {
-          bg: 'bg-rose-500/20 text-rose-400 border-rose-500/50',
-          dot: 'bg-rose-500 shadow-[0_0_10px_#f43f5e]',
-          cardGlow: 'shadow-[0_0_25px_-5px_rgba(244,63,94,0.2)] border-rose-500/30',
-          title: 'NO TRADE / CAPITAL DEFENSE CHOP',
-          desc: 'High false-breakout rate (>60%) or narrow range vs costs. Statistically negative expectancy.',
+          bg: 'bg-amber-500 text-slate-950 font-bold',
+          badgeBg: 'bg-amber-500/20 text-amber-400 border-amber-500/40',
+          dot: 'bg-amber-400',
+          glowText: 'text-amber-400',
+          name: 'SCALP WINDOW',
+          isTradable: true,
         };
       case 'CLOSED':
+        return {
+          bg: 'bg-slate-800 text-slate-400 border border-slate-700/50',
+          badgeBg: 'bg-slate-800 text-slate-400 border-slate-700',
+          dot: 'bg-slate-500',
+          glowText: 'text-slate-400',
+          name: 'MARKET CLOSED',
+          isTradable: false,
+        };
+      case 'NO_TRADE':
       default:
         return {
-          bg: 'bg-slate-700/40 text-slate-400 border-slate-600/50',
-          dot: 'bg-slate-500',
-          cardGlow: 'border-slate-800',
-          title: 'MARKET CLOSED / CME SETTLEMENT PAUSE',
-          desc: 'Trading halted or frozen during weekend or NYMEX/CME daily maintenance (02:30–03:30 IST).',
+          bg: 'bg-rose-950/40 text-rose-300 border border-rose-900/40',
+          badgeBg: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
+          dot: 'bg-rose-500',
+          glowText: 'text-rose-400',
+          name: 'CAPITAL DEFENSE (CHOP)',
+          isTradable: false,
         };
     }
   };
 
-  const activeStyle = activeSlot ? getBadgeStyle(activeSlot.label) : getBadgeStyle('NO_TRADE');
+  const activeVisuals = statusInfo.activeSlot
+    ? getSlotVisuals(statusInfo.activeSlot.label)
+    : getSlotVisuals('NO_TRADE');
+
+  const isTodaySelected = selectedDay === istInfo.effectiveWeekday;
 
   return (
-    <div className="flex flex-col gap-6 animate-fade-in text-slate-100">
-      {/* Top Banner: Status Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-[#0d1424] p-5 rounded-2xl border border-slate-800/80 shadow-xl backdrop-blur-md">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 shadow-inner">
-            <Activity className="w-6 h-6 animate-pulse" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <h2 className="text-xl font-bold font-mono tracking-tight text-white flex items-center gap-2">
-                Live IST Quant Terminal
-                <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono">
-                  PROD v1.0
+    <div className="flex flex-col gap-5 animate-fade-in text-slate-100 select-none">
+      
+      {/* 1. MINIMALIST TOP NAV: Asset Switcher & Day Selector */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#0d1424] p-3 rounded-2xl border border-slate-800/80 shadow-lg">
+        {/* Asset Switcher Pills */}
+        <div className="flex items-center gap-1.5 p-1 bg-[#131b2e] rounded-xl border border-slate-800 overflow-x-auto">
+          {(Object.keys(INSTRUMENT_META) as InstrumentKey[]).map((key) => {
+            const meta = INSTRUMENT_META[key];
+            const isSelected = selectedInstrument === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setSelectedInstrument(key)}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-mono font-bold transition-all whitespace-nowrap ${
+                  isSelected
+                    ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <span>{meta.icon}</span>
+                <span>{meta.name}</span>
+                <span className={`text-[10px] font-normal ${isSelected ? 'text-slate-900' : 'text-slate-500'}`}>
+                  {meta.tag}
                 </span>
-              </h2>
-            </div>
-            <p className="text-xs text-slate-400 font-mono mt-0.5">
-              Empirical momentum vs chop classifier &bull; 0-100 Trend-Quality Score
-            </p>
-          </div>
+              </button>
+            );
+          })}
         </div>
 
-        {/* Live IST Clock & DST Tag */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#141d33] border border-slate-700/80 rounded-xl font-mono text-xs shadow-inner">
-            <Clock className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-slate-400">IST:</span>
-            <span className="font-bold text-emerald-400 text-sm">{istInfo.timeStr}</span>
+        {/* Live IST Clock & Day Tag */}
+        <div className="flex items-center gap-2.5 px-3 py-1.5 bg-[#131b2e] rounded-xl border border-slate-800 text-xs font-mono self-start md:self-auto">
+          <Clock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span className="text-slate-400">IST:</span>
+          <span className="font-extrabold text-white tracking-wider text-sm">{istInfo.timeStr}</span>
+          <span className="text-slate-600">•</span>
+          <span className="text-slate-300 font-semibold">{istInfo.dateStr}</span>
+        </div>
+      </div>
+
+      {/* 2. HERO STATUS CARD: Majorly saying if it's trading hours now or not */}
+      <div
+        className={`relative overflow-hidden rounded-2xl border p-5 sm:p-7 transition-all duration-300 ${
+          statusInfo.isTradable
+            ? 'bg-gradient-to-r from-emerald-950/40 via-[#0e172a] to-[#0d1424] border-emerald-500/50 shadow-[0_0_40px_-10px_rgba(16,185,129,0.3)]'
+            : 'bg-gradient-to-r from-rose-950/25 via-[#0e172a] to-[#0d1424] border-rose-500/40 shadow-[0_0_35px_-10px_rgba(244,63,94,0.2)]'
+        }`}
+      >
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          {/* Left: Instant visual answer */}
+          <div className="flex flex-col gap-2.5">
+            {/* Top Permission Badge */}
+            <div className="flex items-center gap-3">
+              <span
+                className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-extrabold tracking-wide uppercase border ${
+                  statusInfo.isTradable
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 shadow-[0_0_12px_rgba(16,185,129,0.4)]'
+                    : 'bg-rose-500/20 text-rose-300 border-rose-500/50 shadow-[0_0_10px_rgba(244,63,94,0.3)]'
+                }`}
+              >
+                <span className="relative flex h-2.5 w-2.5">
+                  <span
+                    className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                      statusInfo.isTradable ? 'bg-emerald-400' : 'bg-rose-400'
+                    }`}
+                  />
+                  <span
+                    className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                      statusInfo.isTradable ? 'bg-emerald-500' : 'bg-rose-500'
+                    }`}
+                  />
+                </span>
+                {statusInfo.isTradable ? 'TRADING HOURS NOW' : 'NO TRADE NOW • CAPITAL DEFENSE'}
+              </span>
+
+              {statusInfo.activeSlot && (
+                <span className="text-xs font-mono text-slate-400 font-semibold">
+                  {statusInfo.activeSlot.start_time} – {statusInfo.activeSlot.end_time} IST
+                </span>
+              )}
+            </div>
+
+            {/* Main Window Title */}
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tight text-white flex items-center gap-3">
+              <span>{activeVisuals.name}</span>
+            </h1>
+
+            {/* Sub-label */}
+            <p className="text-xs sm:text-sm font-mono text-slate-400">
+              {statusInfo.isTradable
+                ? 'High directional path efficiency. Safe to deploy capital and trade momentum.'
+                : 'High false-breakout rate & chop risk. Stay flat, avoid friction, and defend capital.'}
+            </p>
           </div>
 
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#141d33] border border-slate-700/80 rounded-xl font-mono text-xs">
-            <Calendar className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-slate-300 font-semibold">{istInfo.dateStr}</span>
-          </div>
+          {/* Right: Clean Countdown Widget */}
+          <div className="flex flex-col items-start lg:items-end justify-center bg-[#131d33]/90 border border-slate-700/70 p-4 sm:px-6 sm:py-4 rounded-xl shrink-0 shadow-inner">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <span>
+                {statusInfo.isTradable ? 'ACTIVE WINDOW TIME REMAINING' : 'NEXT TRADABLE WINDOW IN'}
+              </span>
+            </div>
 
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/15 border border-blue-500/30 rounded-xl font-mono text-xs text-blue-400">
-            <span className="font-bold">{activeRegime}</span>
-            <span className="text-[10px] text-blue-300/80">(EDT UTC-4)</span>
+            <div
+              className={`text-2xl sm:text-3xl md:text-4xl font-mono font-black tracking-tight mt-0.5 ${
+                statusInfo.isTradable ? 'text-emerald-400 timer-glow-emerald' : 'text-amber-400 timer-glow-amber'
+              }`}
+            >
+              {statusInfo.isTradable
+                ? formatCountdown(statusInfo.secondsRemainingInActive)
+                : formatCountdown(statusInfo.secondsUntilNextTradable)}
+            </div>
+
+            {/* Next Window Pill or Slot Range */}
+            <div className="text-xs font-mono text-slate-400 mt-1 flex items-center gap-1.5">
+              {!statusInfo.isTradable && statusInfo.nextTradableSlot ? (
+                <span>
+                  Next: <strong className="text-white">{statusInfo.nextTradableSlot.label}</strong> ({statusInfo.nextTradableSlot.start_time} IST)
+                </span>
+              ) : (
+                <span>
+                  Window ends at <strong className="text-white">{statusInfo.activeSlot?.end_time} IST</strong>
+                </span>
+              )}
+            </div>
+
+            {/* Minimalist Progress Bar */}
+            <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-3">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  statusInfo.isTradable ? 'bg-emerald-500' : 'bg-rose-500'
+                }`}
+                style={{ width: `${statusInfo.percentElapsed}%` }}
+              />
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Instrument Tabs */}
-      <div className="flex flex-wrap items-center gap-2 bg-[#0c1322] p-1.5 rounded-xl border border-slate-800">
-        {(Object.keys(INSTRUMENT_META) as InstrumentKey[]).map((key) => {
-          const meta = INSTRUMENT_META[key];
-          const isSelected = selectedInstrument === key;
-          return (
-            <button
-              key={key}
-              onClick={() => setSelectedInstrument(key)}
-              className={`flex-1 min-w-[200px] flex items-center justify-between px-4 py-2.5 rounded-lg font-mono text-xs transition-all ${
-                isSelected
-                  ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-bold shadow-md shadow-emerald-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-base">{meta.icon}</span>
-                <div className="text-left">
-                  <div className={isSelected ? 'text-slate-950 font-bold' : 'text-slate-200 font-semibold'}>
-                    {meta.name}
+      {/* 3. 24-HOUR MULTI-TRACK VISUAL CHART (Tokyo/London SessionTimeline style) */}
+      <div className="bg-[#0d1424] p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-col gap-3">
+        
+        {/* Chart Header: Day Selector & Quick Stats */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-800/80">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
+              24-Hour Visual Schedule
+            </span>
+            <span className="text-xs font-mono text-slate-500">•</span>
+            <span className="text-xs font-mono text-emerald-400 font-bold">
+              {dayStats.tradableHours}h Tradable
+            </span>
+            <span className="text-xs font-mono text-slate-500">•</span>
+            <span className="text-xs font-mono text-rose-400 font-bold">
+              {dayStats.defenseHours}h Defense
+            </span>
+          </div>
+
+          {/* Weekday Switcher */}
+          <div className="flex items-center gap-1 bg-[#131b2e] p-1 rounded-xl border border-slate-800 overflow-x-auto self-start sm:self-auto">
+            {WEEKDAYS.map((wd) => {
+              const isCurrentDay = wd === istInfo.effectiveWeekday;
+              const isSelected = selectedDay === wd;
+              return (
+                <button
+                  key={wd}
+                  onClick={() => setSelectedDay(wd)}
+                  className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    isSelected
+                      ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                  }`}
+                >
+                  <span>{wd}</span>
+                  {isCurrentDay && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* The Visual Timeline Layout */}
+        <div className="w-full relative mt-2 select-none">
+          
+          {/* Time Axis Bar: 00:00 to 24:00 IST */}
+          <div className="flex mb-2 text-[10px] sm:text-xs font-mono text-slate-400 items-center">
+            {/* Left Sessions Index Spacer */}
+            <div className="w-16 sm:w-36 md:w-44 shrink-0 flex items-center pr-2">
+              {hoverData?.isHovering ? (
+                <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-emerald-400 font-mono font-bold text-xs truncate">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                  <span>{formatMins(hoverData.minutesInIst)} IST</span>
+                </div>
+              ) : (
+                <span className="hidden sm:inline text-[10px] font-mono text-slate-500 uppercase tracking-wider font-bold">
+                  TRACKS
+                </span>
+              )}
+            </div>
+
+            {/* Horizontal Axis Ticks */}
+            <div className="flex-1 flex justify-between relative px-0 font-mono">
+              <span className="-ml-1 sm:-ml-2">00:00</span>
+              <span>04:00</span>
+              <span>08:00</span>
+              <span>12:00</span>
+              <span>16:00</span>
+              <span>20:00</span>
+              <span className="-mr-1 sm:-mr-2">24:00</span>
+
+              {/* TradingView Floating Time Pill on Scale at Hover Position */}
+              {hoverData?.isHovering && (
+                <div
+                  className="hidden sm:flex absolute -top-1 pointer-events-none z-40 transition-all duration-75"
+                  style={{ left: `${hoverData.xPct}%` }}
+                >
+                  <div
+                    className={`bg-slate-900 border border-slate-600 text-slate-100 px-2 py-0.5 rounded shadow-xl font-mono text-xs font-bold whitespace-nowrap flex items-center gap-1.5 -translate-y-full ${
+                      hoverData.xPct < 12
+                        ? 'translate-x-0'
+                        : hoverData.xPct > 88
+                        ? '-translate-x-full'
+                        : '-translate-x-1/2'
+                    }`}
+                  >
+                    <span className="text-white">{formatMins(hoverData.minutesInIst)} IST</span>
+                    {hoverData.slot && (
+                      <span className={`text-[10px] px-1 py-0.2 rounded font-bold ${
+                        hoverData.slot.label !== 'NO_TRADE' && hoverData.slot.label !== 'CLOSED'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : 'bg-rose-500/20 text-rose-400'
+                      }`}>
+                        {hoverData.slot.label}
+                      </span>
+                    )}
                   </div>
-                  <div className={`text-[10px] ${isSelected ? 'text-slate-900/80' : 'text-slate-500'}`}>
-                    {meta.tag}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Master Grid: Left Labels + Right Multi-Tracks */}
+          <div className="flex w-full">
+            {/* Left Index Column */}
+            <div className="w-16 sm:w-36 md:w-44 shrink-0 flex flex-col gap-3">
+              {/* Row 1: Tradable Windows Label */}
+              <div className="h-16 sm:h-18 flex items-center gap-2 pr-2 sm:pr-3 rounded-xl bg-slate-900/60 border border-slate-800/80 px-2 sm:px-3">
+                <span className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold font-mono flex items-center justify-center shrink-0">
+                  TR
+                </span>
+                <div className="hidden sm:block min-w-0 flex-1">
+                  <div className="text-xs font-bold text-emerald-400 leading-tight truncate">
+                    Tradable
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-400 mt-0.5 truncate">
+                    {dayStats.tradableHours} hrs ({dayStats.tradableCount} slots)
                   </div>
                 </div>
               </div>
-              <span className={`text-[10px] px-2 py-0.5 rounded ${isSelected ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
-                {key === 'BTCUSDT' ? '4Y HIST' : key === 'XAUUSD_MT5' ? '3Y SPOT' : '9M PERP'}
-              </span>
-            </button>
-          );
-        })}
-      </div>
 
-      {/* Hero Card: Current Slot Status & Countdown */}
-      <div className={`relative overflow-hidden rounded-2xl border bg-[#0d1424] p-6 lg:p-8 transition-all ${activeStyle.cardGlow}`}>
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          {/* Left: Active Slot Badge & Title */}
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-bold border ${activeStyle.bg}`}>
-                <span className={`w-2 h-2 rounded-full ${activeStyle.dot}`} />
-                {activeSlot ? activeSlot.label : 'NO_TRADE'}
-              </span>
-
-              {activeSlot && (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                  <span>CONF:</span>
-                  <span className={activeSlot.confidence === 'HIGH' ? 'text-emerald-400' : activeSlot.confidence === 'MED' ? 'text-amber-400' : 'text-rose-400'}>
-                    {activeSlot.confidence}
-                  </span>
+              {/* Row 2: Capital Defense Label */}
+              <div className="h-14 sm:h-16 flex items-center gap-2 pr-2 sm:pr-3 rounded-xl bg-slate-900/60 border border-slate-800/80 px-2 sm:px-3">
+                <span className="w-8 h-8 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-400 text-xs font-bold font-mono flex items-center justify-center shrink-0">
+                  NO
                 </span>
-              )}
-
-              {activeSlot && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                  <span>SCORE:</span>
-                  <span className="text-white font-extrabold">{activeSlot.score}/100</span>
-                </span>
-              )}
-            </div>
-
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              {activeStyle.title}
-            </h3>
-            <p className="text-sm text-slate-400 max-w-2xl">
-              {activeStyle.desc}
-            </p>
-          </div>
-
-          {/* Right: Live Countdown & Next Slot */}
-          <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-4 bg-[#141e34] p-4 rounded-xl border border-slate-700/60 shadow-inner">
-            <div className="text-left sm:text-right">
-              <div className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">
-                Slot Time Remaining
-              </div>
-              <div className="text-2xl sm:text-3xl font-mono font-black text-emerald-400 tracking-tight mt-0.5 flex items-baseline gap-1">
-                <span>{String(minutesRemaining).padStart(2, '0')}:{String(secondsRemaining).padStart(2, '0')}</span>
-                <span className="text-xs font-normal text-slate-400 font-sans">mins</span>
+                <div className="hidden sm:block min-w-0 flex-1">
+                  <div className="text-xs font-bold text-rose-400 leading-tight truncate">
+                    Capital Defense
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-400 mt-0.5 truncate">
+                    {dayStats.defenseHours} hrs (Chop)
+                  </div>
+                </div>
               </div>
             </div>
 
-            {nextSlot && (
-              <div className="text-left sm:text-right border-t border-slate-700/40 pt-2 w-full">
-                <span className="text-[10px] font-mono text-slate-400">UPCOMING SLOT: </span>
-                <span className="text-xs font-mono font-bold text-white">
-                  {nextSlot.label} ({nextSlot.start_time})
-                </span>
+            {/* Right Multi-Tracks Canvas */}
+            <div
+              onMouseMove={handleChartMouseMove}
+              onMouseLeave={handleChartMouseLeave}
+              className="flex-1 min-w-0 relative flex flex-col gap-3 sm:cursor-crosshair"
+            >
+              {/* Vertical Dashed Hover Guide */}
+              {hoverData?.isHovering && (
+                <div
+                  className="hidden sm:block absolute top-0 bottom-0 border-r border-dashed border-slate-300/60 pointer-events-none z-30 transition-all duration-75"
+                  style={{ left: `${hoverData.xPct}%` }}
+                />
+              )}
+
+              {/* Live Time Synchronized Needle */}
+              {isTodaySelected && (
+                <div
+                  className="absolute -top-7 bottom-0 w-[1.5px] bg-white z-20 pointer-events-none transition-all duration-150"
+                  style={{ left: `${needlePct}%` }}
+                >
+                  {/* Floating Needle Pill */}
+                  <div
+                    className={`absolute -top-1 bg-emerald-500 text-slate-950 px-2 py-0.5 sm:px-2.5 sm:py-0.5 rounded-md shadow-lg font-mono text-center flex flex-col items-center whitespace-nowrap transition-transform duration-100 ${
+                      needlePct < 15
+                        ? 'left-0 translate-x-0'
+                        : needlePct > 85
+                        ? 'right-0 translate-x-0'
+                        : 'left-1/2 -translate-x-1/2'
+                    } -translate-y-full`}
+                  >
+                    <span className="text-[10px] sm:text-xs font-extrabold leading-tight">
+                      NOW {pad(istInfo.hour)}:{pad(istInfo.minute)}
+                    </span>
+                    <span className="text-[8px] font-bold opacity-85 uppercase tracking-wide">
+                      IST
+                    </span>
+                    {/* Downward pointer tip */}
+                    <div
+                      className={`w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-emerald-500 absolute -bottom-1 ${
+                        needlePct < 15 ? 'left-3' : needlePct > 85 ? 'right-3' : 'left-1/2 -translate-x-1/2'
+                      }`}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* TRACK 1: TRADABLE WINDOWS */}
+              <div className="relative w-full h-16 sm:h-18 bg-[#131b2e] rounded-xl overflow-hidden border border-slate-800 shadow-inner">
+                {/* 4-hour background grid lines */}
+                <div className="absolute inset-0 pointer-events-none flex">
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 h-full" />
+                </div>
+
+                {/* Slices for tradable windows */}
+                {selectedDaySlots.map((slot, idx) => {
+                  if (slot.label === 'NO_TRADE' || slot.label === 'CLOSED') return null;
+
+                  const { startMin, endMin } = parseSlotRange(slot);
+                  const leftPct = (startMin / 1440) * 100;
+                  const widthPct = (slot.duration_minutes / 1440) * 100;
+
+                  const visuals = getSlotVisuals(slot.label);
+                  const isCurrentActive = isTodaySelected && istInfo.totalMinutes >= startMin && istInfo.totalMinutes < endMin;
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`absolute top-0 bottom-0 ${visuals.bg} flex flex-col items-center justify-center transition-all cursor-pointer overflow-hidden min-w-0 shadow-md ${
+                        isCurrentActive
+                          ? 'ring-2 ring-white brightness-110 z-10 shadow-emerald-500/40'
+                          : 'hover:brightness-110'
+                      }`}
+                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                      title={`${slot.label} (${slot.start_time} - ${slot.end_time} IST)`}
+                    >
+                      {widthPct >= 11 ? (
+                        <div className="w-full flex flex-col items-center justify-center px-1 text-center">
+                          <span className="text-[11px] sm:text-xs font-black truncate max-w-full leading-tight">
+                            {isCurrentActive ? `Active • ${visuals.name}` : visuals.name}
+                          </span>
+                          <span className="text-[9px] sm:text-[10px] font-mono opacity-90 truncate max-w-full">
+                            {slot.start_time} – {slot.end_time}
+                          </span>
+                        </div>
+                      ) : widthPct >= 5.5 ? (
+                        <div className="w-full flex flex-col items-center justify-center px-0.5 text-center">
+                          <span className="text-[10px] font-black truncate max-w-full leading-tight">
+                            {slot.label === 'SWING_ENTRY' ? 'SWING' : slot.label === 'SMALL_TRADES' ? 'SCALP' : 'PRIME'}
+                          </span>
+                          <span className="text-[8px] font-mono opacity-90 truncate max-w-full leading-none">
+                            {slot.start_time}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-[9px] font-black font-mono">
+                          {slot.start_time.split(':')[0]}h
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            )}
+
+              {/* TRACK 2: CAPITAL DEFENSE & NON-TRADABLE */}
+              <div className="relative w-full h-14 sm:h-16 bg-[#131b2e] rounded-xl overflow-hidden border border-slate-800 shadow-inner flex">
+                {/* 4-hour background grid lines */}
+                <div className="absolute inset-0 pointer-events-none flex">
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 border-r border-slate-800/50 h-full" />
+                  <div className="w-1/6 h-full" />
+                </div>
+
+                {/* Slices for defense / closed windows */}
+                {selectedDaySlots.map((slot, idx) => {
+                  if (slot.label !== 'NO_TRADE' && slot.label !== 'CLOSED') return null;
+
+                  const { startMin, endMin } = parseSlotRange(slot);
+                  const leftPct = (startMin / 1440) * 100;
+                  const widthPct = (slot.duration_minutes / 1440) * 100;
+
+                  const isCurrentActive = isTodaySelected && istInfo.totalMinutes >= startMin && istInfo.totalMinutes < endMin;
+                  const isClosed = slot.label === 'CLOSED';
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`absolute top-0 bottom-0 flex items-center justify-center px-1 text-center overflow-hidden min-w-0 transition-colors ${
+                        isClosed
+                          ? 'bg-slate-800/70 border-r border-slate-700/50 text-slate-400'
+                          : 'bg-rose-950/40 border-r border-rose-900/40 text-rose-300 hover:bg-rose-950/60'
+                      } ${isCurrentActive ? 'ring-1 ring-rose-400 z-10' : ''}`}
+                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                      title={`${isClosed ? 'Closed' : 'Chop Defense'} (${slot.start_time} - ${slot.end_time} IST)`}
+                    >
+                      {widthPct >= 14 ? (
+                        <span className="text-[10px] font-mono font-medium truncate max-w-full">
+                          {isClosed ? 'CME Settlement Pause' : 'Capital Defense (Chop)'}
+                        </span>
+                      ) : widthPct >= 7 ? (
+                        <span className="text-[9px] font-mono truncate max-w-full">
+                          {isClosed ? 'Closed' : 'Chop'}
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-mono opacity-50">⊘</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
-
-        {/* Quant Metric KPI Pills for Active Slot */}
-        {activeSlot && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-6 border-t border-slate-800/80">
-            <div className="bg-[#101828] p-3 rounded-xl border border-slate-800">
-              <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
-                <span>Efficiency Ratio</span>
-                <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-              </div>
-              <div className="text-lg font-mono font-bold text-white mt-1">
-                {activeSlot.stats.er_mean.toFixed(3)}
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">
-                {activeSlot.stats.er_mean > 0.32 ? 'High Directional Path' : 'Moderate / Flat'}
-              </div>
-            </div>
-
-            <div className="bg-[#101828] p-3 rounded-xl border border-slate-800">
-              <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
-                <span>Range / Cost</span>
-                <Flame className="w-3.5 h-3.5 text-amber-400" />
-              </div>
-              <div className="text-lg font-mono font-bold text-white mt-1">
-                {activeSlot.stats.range_cost_ratio}x
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">
-                Hard Gate &gt; 2.0x (BTC: 10bps RT)
-              </div>
-            </div>
-
-            <div className="bg-[#101828] p-3 rounded-xl border border-slate-800">
-              <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
-                <span>Follow-Through</span>
-                <Zap className="w-3.5 h-3.5 text-cyan-400" />
-              </div>
-              <div className="text-lg font-mono font-bold text-white mt-1">
-                {Math.round(activeSlot.stats.follow_through_prob * 100)}%
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">
-                +1 ATR before -1 ATR in 3h
-              </div>
-            </div>
-
-            <div className="bg-[#101828] p-3 rounded-xl border border-slate-800">
-              <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
-                <span>False Breakout</span>
-                <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-              </div>
-              <div className="text-lg font-mono font-bold text-white mt-1">
-                {Math.round(activeSlot.stats.false_breakout_rate * 100)}%
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">
-                Prior 60m range break reversals
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* 24-Hour Visual Timeline */}
-      <div className="bg-[#0d1424] p-5 rounded-2xl border border-slate-800/80 shadow-md">
-        <div className="flex items-center justify-between mb-3">
+      {/* 4. TODAY'S ENTIRE SCHEDULE CHRONOLOGICAL BREAKDOWN */}
+      <div className="bg-[#0d1424] p-5 rounded-2xl border border-slate-800/80 shadow-md flex flex-col gap-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider">
-              24-Hour IST Timeline Bar ({selectedDay})
-            </span>
+            <Calendar className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-white">
+              Full Chronological Schedule ({selectedDay})
+            </h3>
           </div>
-          <span className="text-[11px] font-mono text-slate-400">
-            Current needle pinned at {istInfo.timeStr}
+          <span className="text-[11px] font-mono text-slate-500">
+            {selectedDaySlots.length} windows • 24:00 IST span
           </span>
         </div>
 
-        {/* The visual timeline bar */}
-        <div className="relative w-full h-10 bg-slate-900 rounded-xl overflow-hidden border border-slate-800 flex">
+        {/* Minimalist Chronological Flow Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 mt-1">
           {selectedDaySlots.map((slot, idx) => {
-            const widthPct = (slot.duration_minutes / 1440) * 100;
-            let bgColor = 'bg-rose-500/40 text-rose-300';
-            if (slot.label === 'PRIME') bgColor = 'bg-emerald-500/70 text-slate-950 font-bold';
-            else if (slot.label === 'SWING_ENTRY') bgColor = 'bg-cyan-500/70 text-slate-950 font-bold';
-            else if (slot.label === 'SMALL_TRADES') bgColor = 'bg-amber-500/50 text-amber-200';
-            else if (slot.label === 'CLOSED') bgColor = 'bg-slate-800 text-slate-500';
+            const { startMin, endMin } = parseSlotRange(slot);
+            const isCurrent = isTodaySelected && istInfo.totalMinutes >= startMin && istInfo.totalMinutes < endMin;
+            const visuals = getSlotVisuals(slot.label);
+            const isTradable = visuals.isTradable;
 
             return (
               <div
                 key={idx}
-                style={{ width: `${widthPct}%` }}
-                title={`${slot.start_time} - ${slot.end_time} | ${slot.label} (Score: ${slot.score})`}
-                className={`h-full border-r border-slate-950/40 flex items-center justify-center text-[10px] font-mono transition-opacity hover:opacity-80 cursor-pointer overflow-hidden ${bgColor}`}
+                className={`p-3 rounded-xl border transition-all flex flex-col justify-between gap-2 ${
+                  isCurrent
+                    ? 'bg-slate-800/90 border-emerald-500/80 shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/50'
+                    : 'bg-[#101828] border-slate-800/80 hover:border-slate-700/80'
+                }`}
               >
-                {widthPct > 6 && `${slot.start_time}`}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${visuals.dot} ${isCurrent ? 'animate-ping' : ''}`} />
+                    <span className="text-xs font-mono font-extrabold text-white">
+                      {slot.start_time} &rarr; {slot.end_time}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    {slot.duration_minutes}m
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
+                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${visuals.badgeBg}`}>
+                    {slot.label}
+                  </span>
+
+                  <span className={`text-[10px] font-mono font-semibold ${isTradable ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {isTradable ? '✓ Tradable' : '⊘ Defense'}
+                  </span>
+                </div>
               </div>
             );
           })}
-
-          {/* Live Needle Pin */}
-          {selectedDay === istInfo.effectiveWeekday && (
-            <div
-              style={{ left: `${(istInfo.totalMinutes / 1440) * 100}%` }}
-              className="absolute top-0 bottom-0 w-1 bg-white shadow-[0_0_10px_#ffffff] z-10 pointer-events-none -translate-x-1/2"
-            >
-              <div className="absolute -top-5 left-1/2 -translate-x-1/2 bg-white text-slate-950 font-mono text-[9px] font-extrabold px-1 rounded shadow">
-                NOW
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex justify-between items-center text-[10px] font-mono text-slate-500 mt-2 px-1">
-          <span>00:00 IST</span>
-          <span>06:00 IST</span>
-          <span>12:00 IST</span>
-          <span>18:00 IST</span>
-          <span>24:00 IST</span>
         </div>
       </div>
 
-      {/* Weekday Schedule Browser & Full Table */}
-      <div className="bg-[#0d1424] p-5 rounded-2xl border border-slate-800/80 shadow-md">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-          <div>
-            <h4 className="text-base font-bold text-white font-mono flex items-center gap-2">
-              <BarChart2 className="w-4 h-4 text-cyan-400" />
-              Full Session Schedule Table
-            </h4>
-            <p className="text-xs text-slate-400 font-mono mt-0.5">
-              Consolidated 60m+ execution windows calibrated against round-trip costs
-            </p>
-          </div>
-
-          {/* Weekday Switcher */}
-          <div className="flex items-center gap-1 bg-[#121a2d] p-1 rounded-xl border border-slate-700/80 overflow-x-auto">
-            {WEEKDAYS.map((wd) => (
-              <button
-                key={wd}
-                onClick={() => setSelectedDay(wd)}
-                className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all whitespace-nowrap ${
-                  selectedDay === wd
-                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {wd}
-                {wd === istInfo.effectiveWeekday && (
-                  <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Table of Slots */}
-        <div className="overflow-x-auto mt-4">
-          <table className="w-full text-left font-mono text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-slate-800 text-slate-400 bg-slate-900/40">
-                <th className="py-2.5 px-3">Time Window (IST)</th>
-                <th className="py-2.5 px-3">Duration</th>
-                <th className="py-2.5 px-3">Classification</th>
-                <th className="py-2.5 px-3 text-right">Trend Score</th>
-                <th className="py-2.5 px-3 text-center">Confidence</th>
-                <th className="py-2.5 px-3 text-right">Efficiency Ratio</th>
-                <th className="py-2.5 px-3 text-right">Range / Cost</th>
-                <th className="py-2.5 px-3 text-right">Follow-Through</th>
-                <th className="py-2.5 px-3 text-right">False Break</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {selectedDaySlots.map((slot, idx) => {
-                const [sh, sm] = slot.start_time.split(':').map(Number);
-                const [eh, em] = slot.end_time.split(':').map(Number);
-                const startMin = sh * 60 + sm;
-                const endMin = (eh === 0 && em === 0 && startMin > 0) ? 1440 : (eh * 60 + em);
-                const isCurrent = selectedDay === istInfo.effectiveWeekday && istInfo.totalMinutes >= startMin && istInfo.totalMinutes < endMin;
-
-                const style = getBadgeStyle(slot.label);
-
-                return (
-                  <tr
-                    key={idx}
-                    className={`transition-colors ${
-                      isCurrent
-                        ? 'bg-emerald-500/10 font-bold border-l-2 border-emerald-400'
-                        : 'hover:bg-slate-800/30'
-                    }`}
-                  >
-                    <td className="py-3 px-3 flex items-center gap-2">
-                      {isCurrent && (
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                      )}
-                      <span className={isCurrent ? 'text-emerald-400 font-bold' : 'text-slate-200'}>
-                        {slot.start_time} &rarr; {slot.end_time}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-slate-400">{slot.duration_minutes}m</td>
-                    <td className="py-3 px-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-bold border ${style.bg}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
-                        {slot.label}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-right font-bold text-white">{slot.score}</td>
-                    <td className="py-3 px-3 text-center">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                        slot.confidence === 'HIGH' ? 'bg-emerald-500/15 text-emerald-400' : slot.confidence === 'MED' ? 'bg-amber-500/15 text-amber-400' : 'bg-rose-500/15 text-rose-400'
-                      }`}>
-                        {slot.confidence}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-right text-slate-300">{slot.stats.er_mean.toFixed(2)}</td>
-                    <td className="py-3 px-3 text-right text-slate-300">{slot.stats.range_cost_ratio}x</td>
-                    <td className="py-3 px-3 text-right text-slate-300">{Math.round(slot.stats.follow_through_prob * 100)}%</td>
-                    <td className="py-3 px-3 text-right text-slate-400">{Math.round(slot.stats.false_breakout_rate * 100)}%</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Dual-Gold Cross-Validation Banner */}
-      <div className="bg-[#0b101c] p-5 rounded-2xl border border-slate-800 text-xs text-slate-400 font-mono flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Info className="w-5 h-5 text-amber-400 flex-shrink-0" />
-          <div>
-            <span className="font-bold text-slate-200">Dual-Gold Methodology: </span>
-            Independent multi-year analysis on MetaTrader 5 institutional spot feed (3 years) cross-validated with Binance XAUUSDT perpetual. 
-            Overlap 5m return correlation: <span className="text-emerald-400 font-bold">0.9673</span> &bull; Median basis spread: <span className="text-amber-400 font-bold">6.06 bps</span>.
-          </div>
-        </div>
-
-        <div className="px-3 py-1 bg-slate-800 rounded-lg text-[10px] text-slate-400 whitespace-nowrap">
-          CME Maint: 02:30–03:30 IST (CLOSED)
-        </div>
-      </div>
-
-      {/* Institutional Disclaimer Footer */}
-      <div className="text-center text-[11px] font-mono text-slate-500 pb-8">
-        TradeClock IST Quantitative Engine &bull; Empirical statistical tendencies, not trade signals or financial advice.
+      {/* 5. Minimalist Footer */}
+      <div className="text-center text-[11px] font-mono text-slate-500 py-2">
+        TradeClock Live IST Subpage &bull; Strict Indian Standard Time (UTC+5:30) &bull; Quantitative Momentum Classifier
       </div>
     </div>
   );
